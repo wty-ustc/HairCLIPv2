@@ -15,7 +15,8 @@ Nenghai Yu<sup>1</sup> <br>
 <sup>3</sup>City University of Hong Kong, <sup>4</sup>Xi'an Jiaotong University
 
 ## News
-**`2023.10.12`**: [HairCLIPv2](https://github.com/wty-ustc/HairCLIPv2) is accepted by ICCV2023! 🎉 The code will be released by December 1st.  
+**`2023.12.01`**: Sorry for the delay as I've been busy looking for a job these days. The code is being organized now and I anticipate it will take a few more days to release.   
+**`2023.10.12`**: [HairCLIPv2](https://github.com/wty-ustc/HairCLIPv2) is accepted by ICCV2023! 🎉
 
 ## To Do
 - [ ] Release training code
