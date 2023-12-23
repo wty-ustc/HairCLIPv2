@@ -4,11 +4,9 @@ import PIL
 import os
 
 class EmbeddingLossBuilder(torch.nn.Module):
-    def __init__(self, l2_lambda=1.0, percept_lambda=1.0):
+    def __init__(self, opts):
         super(EmbeddingLossBuilder, self).__init__()
-        self.l2_lambda = l2_lambda
-        self.percept_lambda = percept_lambda
-        self.parsed_loss = [[self.l2_lambda, 'l2'], [self.percept_lambda, 'percep']]
+        self.parsed_loss = [[opts.l2_lambda_embedding, 'l2'], [opts.percept_lambda_embedding, 'percep']]
         self.l2 = torch.nn.MSELoss()
         self.percept = lpips.PerceptualLoss(model="net-lin", net="vgg", use_gpu=False).cuda()
         self.percept.eval()
@@ -21,7 +19,7 @@ class EmbeddingLossBuilder(torch.nn.Module):
 
         return self.percept(gen_im, ref_im).sum()
 
-    def forward(self, ref_im_H,ref_im_L, gen_im_H, gen_im_L):
+    def forward(self, ref_im_H, ref_im_L, gen_im_H, gen_im_L):
         loss = 0
         loss_fun_dict = {
             'l2': self._loss_l2,

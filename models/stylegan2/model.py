@@ -484,7 +484,7 @@ class Generator(nn.Module):
             input_is_latent=False,
             noise=None,
             randomize_noise=True,
-            layer_in=None, #空域feature
+            layer_in=None, #feature
             skip=None,
             start_layer=0,
             end_layer=8,

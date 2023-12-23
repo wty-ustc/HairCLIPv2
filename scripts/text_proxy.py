@@ -5,18 +5,13 @@ from utils.image_utils import process_display_input
 import torch.nn.functional as F
 from tqdm import tqdm
 class TextProxy(torch.nn.Module):
-    def __init__(self, generator, seg, mean_latent_code, aug_clip_loss=True):
+    def __init__(self, opts, generator, seg, mean_latent_code):
         super(TextProxy, self).__init__()
+        self.opts = opts
         self.generator = generator
         self.seg = seg
-        self.clip_lambda = 1
-        self.hair_mask_lambda = 1
-        self.landmark_lambda = 200
-        self.lr=0.01
-        self.step=200
-        self.visual_num = 10
         self.mask_loss = self.weighted_ce_loss()
-        self.clip_loss = self.get_clip_loss(aug_clip_loss=aug_clip_loss)
+        self.clip_loss = self.get_clip_loss()
         self.landmark_loss = torch.nn.MSELoss()
         self.mean_latent_code = mean_latent_code
         self.kp_extractor = self.load_kp_extractor()
@@ -29,11 +24,11 @@ class TextProxy(torch.nn.Module):
         weight_tmp[0] = 1
         return torch.nn.CrossEntropyLoss(weight=weight_tmp).cuda()
 
-    def get_clip_loss(self, aug_clip_loss=True):
-        if aug_clip_loss:
-            return AugCLIPLoss()
-        else:
+    def get_clip_loss(self):
+        if self.opts.no_aug_clip_loss_text:
             return CLIPLoss()
+        else:
+            return AugCLIPLoss()
 
     def load_kp_extractor(self):
         kp_extractor = face_alignment.FaceAlignment(face_alignment.LandmarksType.THREE_D, flip_input=False, device='cuda')
@@ -60,7 +55,7 @@ class TextProxy(torch.nn.Module):
             else:
                 tmp.requires_grad = False
             latent.append(tmp)
-        optimizer = torch.optim.Adam(latent[0:7], lr=self.lr)
+        optimizer = torch.optim.Adam(latent[0:7], lr=self.opts.lr_text)
         return optimizer, latent
 
     def inference_on_kp_extractor(self, input_image):
@@ -70,8 +65,8 @@ class TextProxy(torch.nn.Module):
         optimizer, latent = self.setup_optimizer(from_mean=from_mean)
         src_kp = self.inference_on_kp_extractor(src_image).clone().detach()
         visual_list = []
-        visual_interval = self.step // self.visual_num
-        pbar = tqdm(range(self.step))
+        visual_interval = self.opts.steps_text // self.opts.visual_num_text
+        pbar = tqdm(range(self.opts.steps_text))
         for i in pbar:
             latent_in = torch.stack(latent).unsqueeze(0)
             img_gen, _ = self.generator([latent_in], input_is_latent=True, randomize_noise=False)
@@ -81,18 +76,18 @@ class TextProxy(torch.nn.Module):
             gen_kp = self.inference_on_kp_extractor(img_gen)
             kp_loss = self.landmark_loss(src_kp[:, 0:17], gen_kp[:, 0:17]) + self.landmark_loss(src_kp[:, 27:36], gen_kp[:, 27:36])
 
-            loss = self.clip_lambda * c_loss + self.landmark_lambda * kp_loss
+            loss = self.opts.clip_lambda_text * c_loss + self.opts.landmark_lambda_text * kp_loss
 
             if painted_mask is not None:
                 down_seg = self.seg(img_gen)[1]
                 hair_mask_loss = self.mask_loss(down_seg, painted_mask)
-                loss += self.hair_mask_lambda * hair_mask_loss
+                loss += self.opts.hair_mask_lambda_text * hair_mask_loss
             
             optimizer.zero_grad()
             loss.backward(retain_graph=True)
             optimizer.step()
             pbar.set_description((f"text_loss: {loss.item():.4f};"))
-            if (i % visual_interval == 0) or (i == (self.step-1)):
+            if (i % visual_interval == 0) or (i == (self.opts.steps_text-1)):
                 with torch.no_grad():
                     img_gen, _ = self.generator([latent_in], input_is_latent=True, randomize_noise=False)
                     visual_list.append(process_display_input(img_gen))

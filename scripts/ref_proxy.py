@@ -9,20 +9,12 @@ from tqdm import tqdm
 from criteria.transfer_loss import TransferLossBuilder
 from PIL import Image
 class RefProxy(torch.nn.Module):
-    def __init__(self, generator, seg, ii2s, hairstyle_ref_dir='test_images/ref_img', W_embedding_dir='test_images/ref_latent'):
+    def __init__(self, opts, generator, seg, ii2s):
         super(RefProxy, self).__init__()
+        self.opts = opts
         self.generator = generator
         self.seg = seg
         self.ii2s = ii2s
-        self.hairstyle_ref_dir = hairstyle_ref_dir
-        self.W_embedding_dir = W_embedding_dir
-        self.style_lambda = 40000
-        self.delta_w_lambda = 1000
-        self.hair_mask_lambda = 1
-        self.landmark_lambda = 1000
-        self.lr=0.01
-        self.step=200
-        self.visual_num = 10
         self.mask_loss = self.weighted_ce_loss()
         self.transfer_loss_builder = TransferLossBuilder()
         self.delta_loss = torch.nn.MSELoss()
@@ -45,17 +37,17 @@ class RefProxy(torch.nn.Module):
 
     def load_hairstyle_ref(self, hairstyle_ref_name):
         image_transform = transforms.Compose([transforms.ToTensor(),transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
-        hairstyle_img_path = f'{self.hairstyle_ref_dir}/{hairstyle_ref_name}'
+        hairstyle_img_path = f'{self.opts.ref_img_dir}/{hairstyle_ref_name}'
         ref_PIL = Image.open(hairstyle_img_path).convert('RGB')
         ref_img = image_transform(ref_PIL).unsqueeze(0).cuda()
 
-        if not os.path.isfile(os.path.join(self.W_embedding_dir, f"{os.path.splitext(hairstyle_ref_name)[0]}.npy")):
+        if not os.path.isfile(os.path.join(self.opts.ref_latent_dir, f"{os.path.splitext(hairstyle_ref_name)[0]}.npy")):
             inverted_wplus_code = self.ii2s.invert_image_in_W(image_path=hairstyle_img_path)
             save_latent = inverted_wplus_code.detach().cpu().numpy()
-            save_latent_path = os.path.join(self.W_embedding_dir, f'{os.path.splitext(hairstyle_ref_name)[0]}.npy')
+            save_latent_path = os.path.join(self.opts.ref_latent_dir, f'{os.path.splitext(hairstyle_ref_name)[0]}.npy')
             np.save(save_latent_path, save_latent)
 
-        latent_W_optimized = torch.from_numpy(np.load(os.path.join(self.W_embedding_dir, f"{os.path.splitext(hairstyle_ref_name)[0]}.npy"))).cuda().requires_grad_(True)
+        latent_W_optimized = torch.from_numpy(np.load(os.path.join(self.opts.ref_latent_dir, f"{os.path.splitext(hairstyle_ref_name)[0]}.npy"))).cuda().requires_grad_(True)
         return ref_img, latent_W_optimized
 
     def inference_on_kp_extractor(self, input_image):
@@ -71,14 +63,14 @@ class RefProxy(torch.nn.Module):
     def forward(self, hairstyle_ref_name, src_image, painted_mask=None):
         ref_img, latent_W_optimized = self.load_hairstyle_ref(hairstyle_ref_name)
         ref_img_256, ref_hairmask_256 = self.gen_256_img_hairmask(ref_img)
-        optimizer = torch.optim.Adam([latent_W_optimized], lr=self.lr)
+        optimizer = torch.optim.Adam([latent_W_optimized], lr=self.opts.lr_ref)
         latent_end = latent_W_optimized[:, 6:, :].clone().detach()
         latent_prev = latent_W_optimized[:, :6, :].clone().detach()
         src_kp = self.inference_on_kp_extractor(src_image).clone().detach()
 
         visual_list = []
-        visual_interval = self.step // self.visual_num
-        pbar = tqdm(range(self.step))
+        visual_interval = self.opts.steps_ref // self.opts.visual_num_ref
+        pbar = tqdm(range(self.opts.steps_ref))
         for i in pbar:
             optimizer.zero_grad()
             latent_in = torch.cat([latent_W_optimized[:, :6, :], latent_end], dim=1)
@@ -91,18 +83,18 @@ class RefProxy(torch.nn.Module):
             gen_kp = self.inference_on_kp_extractor(img_gen)
             kp_loss = self.landmark_loss(src_kp[:, :], gen_kp[:, :])
 
-            loss = self.style_lambda * hair_style_loss + self.delta_w_lambda * delta_w_loss + self.landmark_lambda * kp_loss
+            loss = self.opts.style_lambda_ref * hair_style_loss + self.opts.delta_w_lambda_ref * delta_w_loss + self.opts.landmark_lambda_ref * kp_loss
 
             if painted_mask is not None:
                 down_seg = self.seg(img_gen)[1]
                 hair_mask_loss = self.mask_loss(down_seg, painted_mask)
-                loss += self.hair_mask_lambda * hair_mask_loss
+                loss += self.opts.hair_mask_lambda_ref * hair_mask_loss
             
             latent_prev = latent_W_optimized[:, :6, :].clone().detach()
             loss.backward()
             optimizer.step()
             pbar.set_description((f"ref_loss: {loss.item():.4f};"))
-            if (i % visual_interval == 0) or (i == (self.step-1)):
+            if (i % visual_interval == 0) or (i == (self.opts.steps_ref-1)):
                 with torch.no_grad():
                     img_gen, _ = self.generator([latent_in], input_is_latent=True, randomize_noise=False)
                     visual_list.append(process_display_input(img_gen))

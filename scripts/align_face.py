@@ -13,10 +13,11 @@ parser = argparse.ArgumentParser(description='Align_face')
 parser.add_argument('-unaligned_dir', type=str, default='test_images/unaligned_img/', help='directory with unaligned images')
 parser.add_argument('-output_dir', type=str, default='test_images/aligned_img', help='output directory')
 parser.add_argument('-output_size', type=int, default=1024, help='size to downscale the input images to, must be power of 2')
+parser.add_argument('-landmark_path', default="pretrained_models/shape_predictor_68_face_landmarks.dat", type=str, help='Path to landmark checkpoint')
 ###############
 
 args = parser.parse_args()
-predictor = dlib.shape_predictor("pretrained_models/shape_predictor_68_face_landmarks.dat")
+predictor = dlib.shape_predictor(args.landmark_path)
 
 for im in Path(args.unaligned_dir).glob("*.*"):
     faces = align_face(str(im),predictor)

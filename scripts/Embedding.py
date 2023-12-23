@@ -17,19 +17,18 @@ import torch.nn.functional as F
 
 
 class Embedding(nn.Module):
-    def __init__(self, generator, mean_latent_code, W_steps=1100, FS_steps=250):
+    def __init__(self, opts, generator, mean_latent_code):
         super(Embedding, self).__init__()
+        self.opts = opts
         self.generator = generator
         self.mean_latent_code = mean_latent_code
-        self.W_steps = W_steps
-        self.FS_steps = FS_steps
         self.image_transform = transforms.Compose([transforms.ToTensor(),transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5])])
         self.load_PCA_model()
         self.load_downsampling()
         self.setup_embedding_loss_builder()
 
     def load_PCA_model(self):
-        PCA_path = "pretrained_models/ffhq_PCA.npz"
+        PCA_path = self.opts.ffhq_pca_path
         if not os.path.isfile(PCA_path):
             print("Can not find the PCA_PATH for FFHQ!")
 
@@ -48,7 +47,7 @@ class Embedding(nn.Module):
             tmp = self.mean_latent_code.clone().detach().cuda()
             tmp.requires_grad = True
             latent.append(tmp)
-        optimizer_W = torch.optim.Adam(latent, lr=0.01)
+        optimizer_W = torch.optim.Adam(latent, lr=self.opts.lr_embedding)
 
         return optimizer_W, latent
 
@@ -62,11 +61,11 @@ class Embedding(nn.Module):
             else:
                 tmp.requires_grad = True
             latent_S.append(tmp)
-        optimizer_FS = torch.optim.Adam(latent_S[7:] + [latent_F], lr=0.01)
+        optimizer_FS = torch.optim.Adam(latent_S[7:] + [latent_F], lr=self.opts.lr_embedding)
         return optimizer_FS, latent_F, latent_S
 
     def setup_embedding_loss_builder(self):
-        self.loss_builder = EmbeddingLossBuilder()
+        self.loss_builder = EmbeddingLossBuilder(self.opts)
 
     def invert_image_in_W(self, image_path=None):
         ref_im = Image.open(image_path).convert('RGB')
@@ -74,7 +73,7 @@ class Embedding(nn.Module):
         ref_im_H = self.image_transform(ref_im.resize((1024, 1024), PIL.Image.LANCZOS)).unsqueeze(0)
 
         optimizer_W, latent = self.setup_W_optimizer()
-        pbar = tqdm(range(self.W_steps), desc='Embedding', leave=False)
+        pbar = tqdm(range(self.opts.W_steps), desc='Embedding', leave=False)
         for step in pbar:
             optimizer_W.zero_grad()
             latent_in = torch.stack(latent).unsqueeze(0)
@@ -101,7 +100,7 @@ class Embedding(nn.Module):
         F_init, _ = self.generator([latent_W], input_is_latent=True, return_latents=False, start_layer=0, end_layer=3)
         optimizer_FS, latent_F, latent_S = self.setup_FS_optimizer(latent_W, F_init)
 
-        pbar = tqdm(range(self.FS_steps), desc='Embedding', leave=False)
+        pbar = tqdm(range(self.opts.FS_steps), desc='Embedding', leave=False)
         for step in pbar:
             optimizer_FS.zero_grad()
             latent_in = torch.stack(latent_S).unsqueeze(0)
@@ -122,14 +121,14 @@ class Embedding(nn.Module):
         return latent_in, latent_F
 
 
-    def cal_p_norm_loss(self, latent_in, p_norm_lambda=0.001):
+    def cal_p_norm_loss(self, latent_in):
         latent_p_norm = (torch.nn.LeakyReLU(negative_slope=5)(latent_in) - self.X_mean).bmm(
             self.X_comp.T.unsqueeze(0)) / self.X_stdev
-        p_norm_loss = p_norm_lambda * (latent_p_norm.pow(2).mean())
+        p_norm_loss = self.opts.p_norm_lambda_embedding * (latent_p_norm.pow(2).mean())
         return p_norm_loss
 
-    def cal_l_F(self, latent_F, F_init, l_F_lambda=0.1):
-        return l_F_lambda * (latent_F - F_init).pow(2).mean()
+    def cal_l_F(self, latent_F, F_init):
+        return self.opts.l_F_lambda_embedding * (latent_F - F_init).pow(2).mean()
 
     def cal_loss(self, im_dict, latent_in, latent_F=None, F_init=None):
         loss, loss_dic = self.loss_builder(**im_dict)
